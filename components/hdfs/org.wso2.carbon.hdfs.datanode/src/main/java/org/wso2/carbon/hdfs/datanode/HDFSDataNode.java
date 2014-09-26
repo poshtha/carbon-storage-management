@@ -27,6 +27,8 @@ import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.SecureDataNodeStarter;
 import org.apache.hadoop.hdfs.server.datanode.SecureDataNodeStarter.SecureResources;
 import org.apache.hadoop.util.Daemon;
+import org.apache.commons.daemon.DaemonContext;
+import org.apache.commons.daemon.DaemonController;
 import org.apache.hadoop.util.StringUtils;
 import org.wso2.carbon.utils.ServerConstants;
 
@@ -37,7 +39,6 @@ import java.net.ServerSocket;
 import java.nio.channels.ServerSocketChannel;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.server.common.HdfsConstants;
 import org.apache.hadoop.http.HttpServer;
 import org.mortbay.jetty.nio.SelectChannelConnector;
 /**
@@ -54,115 +55,99 @@ public class HDFSDataNode {
     private static final String METRICS2_PROPERTIES = "hadoop-metrics2.properties";
 
     private Thread thread;
- 
       
     private String [] args = {""};
     private SecureResources resources;
-    
+    Configuration configuration;
 
     public HDFSDataNode() {
         log.info("HDFS: Entered Data Node ");
-
+        log.info("HDFS: v2.4.1-3 ");
     	
-    	Configuration configuration = new Configuration(false);
+        configuration = new Configuration(false);
         String carbonHome = System.getProperty(ServerConstants.CARBON_HOME);
-      //String hadoopConf = carbonHome + File.separator + "repository" + File.separator +
-      //                    "conf" + File.separator + "etc" + File.separator + "hadoop";
         String hadoopCoreSiteConf = carbonHome + File.separator + "repository" + File.separator +
                 "conf" + File.separator + "etc" + File.separator + "hadoop" + File.separator + CORE_SITE_XML;
         String hdfsCoreSiteConf = carbonHome + File.separator + "repository" + File.separator +
                 "conf" + File.separator + "etc" + File.separator + "hadoop" + File.separator + HDFS_SITE_XML;
         String hadoopPolicyConf = carbonHome + File.separator + "repository" + File.separator +
                 "conf" + File.separator + "etc" + File.separator + "hadoop" + File.separator + HADOOP_POLICY_XML;
-//        String mapredSiteConf = carbonHome + File.separator + "repository" + File.separator +
-//                "conf" + File.separator + "etc" + File.separator + "hadoop" + File.separator + MAPRED_SITE_XML;
         String hadoopMetrics2Properties = carbonHome + File.separator + "repository" + File.separator +
                 "conf" + File.separator + "etc" + File.separator + "hadoop" + File.separator + METRICS2_PROPERTIES;
-        //configuration.addResource(new Path(hadoopConf));
         configuration.addResource(new Path(hadoopCoreSiteConf));
         configuration.addResource(new Path(hdfsCoreSiteConf));
-        configuration.addResource(new Path(hadoopPolicyConf));
-        //configuration.addResource(new Path(hadoopMetrics2Properties));
+        configuration.set("fs.hdfs.impl", 
+                org.apache.hadoop.hdfs.DistributedFileSystem.class.getName()
+            );
+        configuration.set("fs.file.impl",
+                org.apache.hadoop.fs.LocalFileSystem.class.getName()
+            );
+        
+        thread = new Thread(new Runnable() {
+            public void run() {
+                if (log.isDebugEnabled()) {
+                    log.debug("Activating the Hadoop Data Node");
+                }
+                
+                try {
+                	localSecureDataNodeStarter secureDataNodeStarter = new localSecureDataNodeStarter();
+                    DaemonContext daemonContext = new DaemonContext() {
+                        @Override
+                        public DaemonController getController() {
+                            return null;
+                        }
 
-        try {
-        	        
-        System.err.println("Initializing secure datanode resources");
-        // We should only start up a secure datanode in a Kerberos-secured cluster
-        if(!configuration.get(HADOOP_SECURITY_AUTHENTICATION).equals("kerberos"))
-          throw new RuntimeException("Cannot start secure datanode in unsecure cluster");
-        
-        // Stash command-line arguments for regular datanode
-       // if(context !=null)
-       // args = context.getArguments();
-        
-        // Obtain secure port for data streaming to datanode
-        InetSocketAddress socAddr = DataNode.getStreamingAddr(configuration);
-        int socketWriteTimeout = configuration.getInt("dfs.datanode.socket.write.timeout",
-            HdfsConstants.WRITE_TIMEOUT);
-        
-        ServerSocket ss = (socketWriteTimeout > 0) ? 
-            ServerSocketChannel.open().socket() : new ServerSocket();
-        ss.bind(socAddr, 0);
-        
-        // Check that we got the port we need
-        if(ss.getLocalPort() != socAddr.getPort())
-          throw new RuntimeException("Unable to bind on specified streaming port in secure " +
-          		"context. Needed " + socAddr.getPort() + ", got " + ss.getLocalPort());
-
-        // Obtain secure listener for web server
-        SelectChannelConnector listener = 
-                       (SelectChannelConnector)HttpServer.createDefaultChannelConnector();
-        InetSocketAddress infoSocAddr = DataNode.getInfoAddr(configuration);
-        listener.setHost(infoSocAddr.getHostName());
-        listener.setPort(infoSocAddr.getPort());
-        // Open listener here in order to bind to port as root
-        listener.open(); 
-        if(listener.getPort() != infoSocAddr.getPort())
-          throw new RuntimeException("Unable to bind on specified info port in secure " +
-              "context. Needed " + socAddr.getPort() + ", got " + ss.getLocalPort());
-       
-        if(ss.getLocalPort() >= 1023 || listener.getPort() >= 1023)
-          throw new RuntimeException("Cannot start secure datanode on non-privileged "
-             +" ports. (streaming port = " + ss + " ) (http listener port = " + 
-             listener.getConnection() + "). Exiting.");
-     
-        System.err.println("Successfully obtained privileged resources (streaming port = "
-            + ss + " ) (http listener port = " + listener.getConnection() +")");
-        
-        resources = new SecureResources(ss, listener);
-        
-
-        
-        try {
-            String dnargs = System.getProperty("dnargs");
-        	if(dnargs == null){
-                log.info("HDFS: No Data Node arguments specified, starting regular data node");
-        		args = null;
-        	}else{
-        		args = dnargs.split(" ");
-        		for(int j=0; j < args.length; j++)
-        			args[j] = "-" + args[j];
-         	}
-        	
-            DataNode datanode = DataNode.createDataNode(args, configuration, resources);
-          
-          } catch (Throwable e) {
-            log.error(StringUtils.stringifyException(e));
-            System.exit(-1);
-          }   
-        
+                        @Override
+                        public String[] getArguments() {
+                            return new String[0];
+                        }
+                    };
+                 
+                    secureDataNodeStarter.setConfiguration(configuration);
+                    secureDataNodeStarter.init(daemonContext);
+                    secureDataNodeStarter.start();
+                    
+                    log.info("HDFS: Hadoop Secured  Datanode Started");
+                } catch (Throwable e) {
+                    log.error(e);
+                }
+            }
+        }, "HadoopDataController");
+        thread.start();
         
         log.info("HDFS: Hadoop Secured  Datanode Started");
 
-           //  DataNode.runDatanodeDaemon(datanode);
-        } catch (Throwable e) {
-            log.error(e);
-            StackTraceElement st[] =e.getStackTrace();
-            for(int k=0; k<st.length; k++)
-            	log.error("AT = " + st[k].getClassName() + ", " + st[k].getFileName() + ", " + st[k].getLineNumber() + ", " + st[k].getMethodName());
-            //System.exit(-1);
-        }
+
+        
+        
     }
+
+	public class localSecureDataNodeStarter extends SecureDataNodeStarter {
+
+		Configuration configuration;
+		private String[] args;
+		private String[] argsDefault = { "-regular" };
+		private SecureResources resources;
+
+		public void setConfiguration(Configuration conf) {
+			configuration = conf;
+		}
+
+		@Override
+		public void init(DaemonContext context) throws Exception {
+			System.err.println("Initializing secure datanode resources");
+
+			args = context.getArguments();
+			resources = getSecureResources(configuration);
+		}
+
+		@Override
+		public void start() throws Exception {
+			System.err.println("Starting regular datanode initialization");
+			DataNode.secureMain(args, resources, configuration);
+		}
+
+	}
 
     /**
      * Starts the Hadoop Data Node
