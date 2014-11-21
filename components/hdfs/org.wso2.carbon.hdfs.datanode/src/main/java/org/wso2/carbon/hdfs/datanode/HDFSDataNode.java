@@ -68,7 +68,7 @@ public class HDFSDataNode {
 	private static final String CORE_SITE_XML = "core-site.xml"; 
 	private static final String HDFS_SITE_XML = "hdfs-site.xml";
 	private static final String TRUE = "true";
-    private FutureTask<String> dataNodeStarterTask;
+        private FutureTask<String> dataNodeStarterTask;
 	private static String[] args = { "-regular" };    // default for starting regular datanode
 	private static final String[] argrb = { "-rollback" };  // argument passed to starting a rollback datanode
 	private static HdfsConfiguration configuration;
